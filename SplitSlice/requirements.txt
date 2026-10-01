@@ -1,0 +1,3 @@
+pizzapi
+google-genai
+python-dotenv

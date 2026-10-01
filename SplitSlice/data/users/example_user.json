@@ -1,0 +1,17 @@
+{
+  "preferences": null,
+  "order_history": [
+    {
+      "cart": [
+        {"code": "P_14PEPPERONI", "name": "Large Pepperoni Pizza", "qty": 1, "unit_price": null},
+        {"code": "2LCOKE", "name": "Coca-Cola - 2 Liter Bottle", "qty": 1, "unit_price": null}
+      ],
+      "price_breakdown": {
+        "subtotal": "14.99",
+        "delivery_fee": "3.99",
+        "tax": "1.50",
+        "total": "20.48"
+      }
+    }
+  ]
+}
