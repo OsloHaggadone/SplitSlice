@@ -1,53 +1,47 @@
-"""
-Abstract interface every pizza provider (Domino's, eventually others)
-must implement, so Agents 2 and 3 can work with any provider without
-caring which chain's API is behind it.
-
-Only Domino's is implemented right now (providers/dominos.py), since
-it's the only chain with an accessible unofficial API we've found. If
-another provider is added later, it plugs in here without Agents 2-4
-needing to change.
-"""
+"""The interface a pizza chain implements, so the rest of the app isn't tied to Domino's."""
 
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from models import CartItem
+from models import CartItem, Discount
+
+
+class StoreNotFound(Exception):
+    """No store delivers to the address (or the store locator's answer couldn't be read)."""
 
 
 class PizzaProvider(ABC):
     @abstractmethod
     def get_store(self, street: str, city: str, state: str, zip_code: str):
-        """Look up the nearest store for a delivery address. Returns
-        whatever (store, address) representation this provider's
-        other methods expect to receive back."""
+        """The nearest store for a delivery address: (store, address) as the other methods
+        take them. Raises StoreNotFound, or a requests error if the provider can't be reached."""
 
     @abstractmethod
     def new_order(self, store, customer_info: dict, address_obj):
-        """Create an empty order tied to a store/customer/address."""
+        """An empty order for a store, customer, and address (it carries the store's menu)."""
 
     @abstractmethod
     def match_pizza(self, order, size: str, style: str) -> Optional[CartItem]:
-        """Find the best real menu item for a requested pizza size/style."""
+        """The menu item for a pizza size and style. Its size and style must say
+        what it really is (style "plain" if the toppings weren't found)."""
 
     @abstractmethod
     def match_extra(self, order, query: str) -> Optional[CartItem]:
-        """Find the best real menu item for a free-text extra (drink, side, etc.)."""
+        """The menu item for a drink or side described in words."""
 
     @abstractmethod
-    def add_items(self, order, cart) -> None:
-        """Flush a finalized cart (list[CartItem]) into the order."""
+    def get_price(self, order, item: CartItem) -> Optional[float]:
+        """Menu price of one unit, options included, without a network call."""
 
     @abstractmethod
-    def validate(self, order) -> bool:
-        """Check the order is valid with the provider, without placing it."""
+    def find_best_discount(self, order, cart) -> Optional[Discount]:
+        """The coupon that saves the most on this cart, or None. Worth caching per
+        cart: the search starts early, and later steps reuse its result."""
 
     @abstractmethod
-    def get_price_breakdown(self, order) -> dict:
-        """Fetch pricing (subtotal, delivery fee, tax, total) without placing."""
+    def validate(self, order, cart, discount: Optional[Discount]) -> bool:
+        """Whether the provider accepts this cart and coupon, without placing anything."""
 
     @abstractmethod
-    def place(self, order, card=None):
-        """Actually submit the order. Every call site for this in the
-        project is deliberately disabled until we decide to go live --
-        see agents/fulfillment_agent.py."""
+    def get_price_breakdown(self, order, cart, discount: Optional[Discount]) -> dict:
+        """The provider's price (subtotal, delivery_fee, tax, total), without placing anything."""

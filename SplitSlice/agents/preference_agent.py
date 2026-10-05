@@ -1,75 +1,206 @@
 """
-Agent 1: tracks what a user actually orders, and is meant to learn
-their topping and price-sensitivity preferences over time, predicting
-what they'd want on a future order.
+Learns from a user's order history how much each preference matters,
+which decides what the budget modes may give up.
 
-What's implemented now: loading/saving per-user data as JSON, and
-recording completed orders into that history. That part is real and
-working.
-
-What's a stub (TODO, to design together):
-  - predict_preferences() currently returns near-empty defaults. With
-    any one user's real order history likely being small (a few dozen
-    orders at most over a semester), a full ML model has very little
-    to learn from. Worth starting with a simple heuristic -- e.g. an
-    exponential moving average of which toppings appear in accepted
-    orders, and how often a cheaper option was chosen when one was
-    offered -- rather than reaching for a real model right away.
-  - Exactly how price_sensitivity gets derived from observed trade-offs
-    (the "would rather save $0.75 than get sausage" kind of signal)
-    isn't decided yet -- this needs a concrete signal to learn from,
-    which in turn depends on what Agent 2's Smart mode actually offers
-    the user to choose between.
+Each score is an exponential moving average over past pizza orders,
+starting at 0.5 (three consistent orders cross HIGH_PRIORITY):
+  - topping: toward 1 if ordered and kept; toward 0 if not ordered, or
+    dropped by a substitution they accepted.
+  - size_priority: toward 0 if they accepted a smaller size, else toward 1.
+  - price_sensitivity: toward the mode they picked (Smart 1, Standard 0.5,
+    Premium 0); it picks the recommended mode.
+New users start from the averages of the nearest circle of people with
+enough orders (contacts, ZIP, store, ZIP area, state, everyone); their
+own orders fade those out. Stated preferences (preferences_cli.py)
+override learned ones.
 """
 
-import json
-from dataclasses import asdict
-from pathlib import Path
+import re
+from collections import Counter
+from dataclasses import replace
+from typing import Optional
 
-from models import OrderResult, UserPreferences
+from models import (DEFAULT_PRIORITY, PLAIN_STYLES, Location, OrderOption, OrderResult,
+                    PreferencePrior, RecordedPreferences, ToppingPreference, UserPreferences)
+from storage import PreferenceStore
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "users"
+EMA_ALPHA = 0.2
+
+PRIOR_MIN_ORDERS = 10   # a circle of people is averaged once it has this many orders...
+PRIOR_MIN_PEOPLE = 2    # ...from at least this many people
+PRIOR_FADES_AFTER = 20  # own pizza orders after which the averages have faded to ~1%
+
+MODE_PRICE_SIGNAL = {"smart": 1.0, "standard": 0.5, "premium": 0.0}
+
+USUAL_LOOKBACK = 10     # recent orders that count toward a usual order
+USUAL_MIN_REPEATS = 2   # times the same order must appear among them
+
+
+def _ema(previous: float, observation: float) -> float:
+    return (1 - EMA_ALPHA) * previous + EMA_ALPHA * observation
+
+
+def prior_applies(history: list) -> bool:
+    """Whether nearby people's averages still matter for this history."""
+    return sum(1 for past in history if past.pizzas) < PRIOR_FADES_AFTER
+
+
+def as_user_id(name: str) -> str:
+    """"Jane Doe" -> jane_doe."""
+    return re.sub(r"[\s\-]+", "_", str(name).strip().lower())
+
+
+def _cart_signature(cart) -> tuple:
+    """Two orders are the same if their pizzas (by size and style), other items, and counts match."""
+    totals = Counter()
+    for item in cart:
+        key = ("pizza", item.size, item.style) if item.is_pizza else ("item", item.code)
+        totals[key] += item.qty
+    return tuple(sorted(totals.items()))
 
 
 class PreferenceAgent:
-    def __init__(self, data_dir: Path = DATA_DIR):
-        self.data_dir = data_dir
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, store: Optional[PreferenceStore] = None):
+        self.store = store if store is not None else PreferenceStore()
 
-    def _path(self, user_id: str) -> Path:
-        return self.data_dir / f"{user_id}.json"
+    def record_order(self, user_id: str, order: OrderResult,
+                     requested_cart: Optional[list] = None,
+                     option: Optional[OrderOption] = None,
+                     location: Optional[Location] = None) -> None:
+        """Save a finished order. What they asked for (`requested_cart`) against what
+        they accepted (`option`) shows which substitutions they were fine with."""
+        self.store.record_order(user_id, order, requested_cart, option, location)
 
-    def load(self, user_id: str) -> dict:
-        """Raw stored data for a user: preferences plus order history."""
-        path = self._path(user_id)
-        if not path.exists():
-            return {"preferences": None, "order_history": []}
-        return json.loads(path.read_text())
+    def predict_preferences(self, user_id: str, location: Optional[Location] = None) -> UserPreferences:
+        """Learned preferences, starting from nearby people's averages while the
+        history is short, with stated ones on top. `location` defaults to their last."""
+        history = self.store.load_order_history(user_id)
+        prior = self.neighborhood_prior(user_id, location) if prior_applies(history) else None
+        return self.predict_from(user_id, history, self.store.get_recorded_preferences(user_id), prior)
 
-    def save(self, user_id: str, data: dict) -> None:
-        self._path(user_id).write_text(json.dumps(data, indent=2))
+    def neighborhood_prior(self, user_id: str, location: Optional[Location] = None) -> Optional[PreferencePrior]:
+        """The averages of the closest circle with enough orders (each circle includes
+        the ones before it), or None if not even everyone has enough yet."""
+        everyone = {user for user, _ in self.store.list_users()} - {user_id}
+        locations = self.store.latest_locations()
+        here = location or locations.get(user_id)
 
-    def record_order(self, user_id: str, order: OrderResult) -> None:
-        """Append a completed order to this user's history. Called by
-        the orchestrator after Agent 3 finalizes an order."""
-        data = self.load(user_id)
-        data["order_history"].append({
-            "cart": [asdict(item) for item in order.cart],
-            "price_breakdown": order.price_breakdown,
-        })
-        self.save(user_id, data)
-        # TODO: update learned topping/price-sensitivity scores here
-        # based on the new data point, rather than only recomputing
-        # them on-demand in predict_preferences() below.
+        def near(same) -> set:
+            return {user for user, there in locations.items() if same(there)}
 
-    def predict_preferences(self, user_id: str) -> UserPreferences:
-        """Return what we currently know/predict about this user's
-        preferences.
+        circles = [("your contacts", self.store.load_contacts(user_id))]
+        if here and here.zip:
+            circles.append(("people in your ZIP code", near(lambda there: there.zip == here.zip)))
+        if here and here.store_id:
+            circles.append(("people your store delivers to", near(lambda there: there.store_id == here.store_id)))
+        if here and here.zip_area:
+            circles.append((f"people in your area (ZIP {here.zip_area}xx)",
+                            near(lambda there: there.zip_area == here.zip_area)))
+        if here and here.state:
+            circles.append((f"people in {here.state}", near(lambda there: there.state == here.state)))
+        circles.append(("everyone using SplitSlice", everyone))
 
-        TODO: replace this placeholder with real scoring once the
-        update rule above is decided. Right now this only reports how
-        many orders we've seen -- no actual prediction yet.
-        """
-        data = self.load(user_id)
-        order_count = len(data["order_history"])
-        return UserPreferences(user_id=user_id, order_count=order_count)
+        people = {}  # user_id -> (history, recorded), for the circle so far
+        for label, members in circles:
+            new = (members & everyone) - people.keys()
+            if new:
+                people.update(self.store.load_people(sorted(new)))
+            active = {user: data for user, data in people.items() if data[0]}  # those with orders
+            if (sum(len(history) for history, _ in active.values()) >= PRIOR_MIN_ORDERS
+                    and len(active) >= PRIOR_MIN_PEOPLE):
+                return self.average_preferences(label, active)
+        return None
+
+    @classmethod
+    def average_preferences(cls, source: str, people: dict) -> PreferencePrior:
+        """Average each person's own predictions ({user_id: (history, recorded)});
+        a topping someone has no score for counts as 0.5."""
+        predictions = [cls.predict_from(user, history, recorded)
+                       for user, (history, recorded) in sorted(people.items())]
+        count = len(predictions)
+        sizes = Counter(p.preferred_size for p in predictions if p.preferred_size)
+        budgets = [p.typical_budget for p in predictions if p.typical_budget is not None]
+        toppings = sorted({name for p in predictions for name in p.topping_preferences})
+        return PreferencePrior(
+            source=source,
+            people=count,
+            orders=sum(len(history) for history, _ in people.values()),
+            toppings={name: sum(p.topping_score(name) for p in predictions) / count for name in toppings},
+            size_priority=sum(p.size_priority for p in predictions) / count,
+            price_sensitivity=sum(p.price_sensitivity for p in predictions) / count,
+            preferred_size=sizes.most_common(1)[0][0] if sizes else None,
+            typical_budget=round(sum(budgets) / len(budgets), 2) if budgets else None,
+        )
+
+    def link_contacts(self, user_id: str, names) -> list:
+        """Make the people they split a bill with (who use SplitSlice) contacts; returns the new ones."""
+        users = {as_user_id(user): user for user, _ in self.store.list_users()}
+        matches = [users[key] for key in map(as_user_id, names) if key in users]
+        return self.store.add_contacts(user_id, matches, source="split") if matches else []
+
+    def usual_order(self, user_id: str) -> Optional[list]:
+        """The user's usual order (CartItems without prices), or None."""
+        return self.pick_usual(self.store.load_recent_requests(user_id, USUAL_LOOKBACK))
+
+    @staticmethod
+    def pick_usual(recent_carts: list) -> Optional[list]:
+        """The most frequent order among `recent_carts` (newest first), if it
+        repeats USUAL_MIN_REPEATS times; ties go to the most recent."""
+        signatures = [_cart_signature(cart) for cart in recent_carts]
+        counts = Counter(sig for sig in signatures if sig)
+        if not counts or max(counts.values()) < USUAL_MIN_REPEATS:
+            return None
+        top = max(counts.values())
+        for cart, sig in zip(recent_carts, signatures):
+            if sig and counts[sig] == top:
+                return [replace(item) for item in cart]
+        return None
+
+    @staticmethod
+    def predict_from(user_id: str, history: list, recorded: Optional[RecordedPreferences] = None,
+                     prior: Optional[PreferencePrior] = None) -> UserPreferences:
+        """The model: PastOrders (oldest first) in, UserPreferences out, starting
+        from the prior's averages if there is one."""
+        topping_scores = dict(prior.toppings) if prior else {}
+        size_priority = prior.size_priority if prior else DEFAULT_PRIORITY
+        price_sensitivity = prior.price_sensitivity if prior else DEFAULT_PRIORITY
+        size_counts = Counter()
+        budgets = []
+
+        for past in history:
+            if past.budget is not None:
+                budgets.append(past.budget)
+            if past.mode in MODE_PRICE_SIGNAL:
+                price_sensitivity = _ema(price_sensitivity, MODE_PRICE_SIGNAL[past.mode])
+            if not past.pizzas:
+                continue
+
+            kept = {style for _, style in past.pizzas
+                    if style not in PLAIN_STYLES and style not in past.dropped_toppings}
+            for topping in set(topping_scores) | kept | past.dropped_toppings:
+                observed = 1.0 if topping in kept else 0.0
+                topping_scores[topping] = _ema(topping_scores.get(topping, DEFAULT_PRIORITY), observed)
+
+            size_counts.update(size for size, _ in past.pizzas)
+            size_priority = _ema(size_priority, 0.0 if past.downsized else 1.0)
+
+        prefs = UserPreferences(
+            user_id=user_id,
+            preferred_size=(size_counts.most_common(1)[0][0] if size_counts
+                            else prior.preferred_size if prior else None),
+            size_priority=size_priority,
+            topping_preferences={name: ToppingPreference(name=name, score=score)
+                                 for name, score in topping_scores.items()},
+            typical_budget=round(sum(budgets) / len(budgets), 2) if budgets else None,
+            price_sensitivity=price_sensitivity,
+            order_count=len(history),
+            prior=prior,
+        )
+        if recorded is not None:
+            for name, score in recorded.toppings.items():
+                prefs.topping_preferences[name] = ToppingPreference(name=name, score=score)
+            if recorded.size_priority is not None:
+                prefs.size_priority = recorded.size_priority
+            if recorded.preferred_size:
+                prefs.preferred_size = recorded.preferred_size
+        return prefs
