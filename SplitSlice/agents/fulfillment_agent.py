@@ -1,14 +1,3 @@
-"""
-Validates and prices the final order with the provider (never placing
-it), and splits the cost.
-
-Splits work in whole cents, so the shares always add up to the total:
-  - clean: everyone pays the same.
-  - slice: each line's menu price is shared by the portions people had
-    (a line nobody claimed is shared by everyone). The delivery fee is
-    split evenly; tax, coupon savings, and other charges follow the food.
-"""
-
 import math
 from fractions import Fraction
 from typing import Optional
