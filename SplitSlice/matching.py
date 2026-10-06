@@ -1,9 +1,3 @@
-"""
-Fuzzy matching of free text to names (menu items, cart lines). Whole
-words and aliases count for more than character similarity, so "coke"
-finds "Coca-Cola" and "cola" doesn't find "chocolate".
-"""
-
 import re
 from difflib import SequenceMatcher
 
