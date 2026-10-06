@@ -1,14 +1,3 @@
-"""
-Turns what the customer types into an OrderRequest or FollowUp: the
-keyword parser (used when Gemini isn't available), and validation of
-Gemini's JSON replies.
-
-The keyword parser splits a message into clauses (on commas, "and",
-"plus"), each with its own count ("2", "two", "a couple of", "x2"): a
-drink or side, a pizza, or more toppings for the pizza before it. Words
-after "no" or "without" never add a topping.
-"""
-
 import re
 from dataclasses import dataclass, field
 from typing import Optional
