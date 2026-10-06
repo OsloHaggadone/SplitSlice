@@ -1,20 +1,3 @@
-"""
-Learns from a user's order history how much each preference matters,
-which decides what the budget modes may give up.
-
-Each score is an exponential moving average over past pizza orders,
-starting at 0.5 (three consistent orders cross HIGH_PRIORITY):
-  - topping: toward 1 if ordered and kept; toward 0 if not ordered, or
-    dropped by a substitution they accepted.
-  - size_priority: toward 0 if they accepted a smaller size, else toward 1.
-  - price_sensitivity: toward the mode they picked (Smart 1, Standard 0.5,
-    Premium 0); it picks the recommended mode.
-New users start from the averages of the nearest circle of people with
-enough orders (contacts, ZIP, store, ZIP area, state, everyone); their
-own orders fade those out. Stated preferences (preferences_cli.py)
-override learned ones.
-"""
-
 import re
 from collections import Counter
 from dataclasses import replace
