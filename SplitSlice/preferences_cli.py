@@ -1,17 +1,3 @@
-"""
-The preference database from the command line:
-
-  python preferences_cli.py import-json        import data/users/*.json (safe to rerun)
-  python preferences_cli.py users              users and their order counts
-  python preferences_cli.py show jane_doe      stated + predicted preferences
-  python preferences_cli.py show newbie --zip 95060 --state CA   a new user's starting point there
-  python preferences_cli.py set jane_doe --topping pepperoni=0.9 --size-priority 0.2
-  python preferences_cli.py unset jane_doe --topping pepperoni --size-priority
-  python preferences_cli.py contacts add jane_doe alice bob     (also: list, remove)
-
-Scores run 0-1; 0.7 or more is high priority, which Standard never gives up.
-"""
-
 import argparse
 import sys
 from pathlib import Path
