@@ -1,23 +1,3 @@
-"""
-Understands what the customer types, keeps the cart, and builds the
-order for each retrieval mode.
-
-Gemini reads each message (the keyword parser in order_parser.py when it
-can't); both produce an OrderRequest or a FollowUp, which is applied to
-the cart against the store's menu.
-
-Modes (get_options()):
-  - PREMIUM: exactly what was asked for, plus the best coupon. Used when
-    there's no budget.
-  - STANDARD: get under budget giving up only low-priority preferences
-    (downsizing, dropping a topping).
-  - SMART: get under budget first, giving up high-priority preferences
-    only if no under-budget option keeps them; else the cheapest version.
-Among options that fit, both give up the least preference (by the learned
-scores). Candidates are compared on menu prices in cents; coupons, which
-need the provider, are checked only for the exact order and the final pick.
-"""
-
 import json
 import os
 import re
