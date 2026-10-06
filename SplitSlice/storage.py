@@ -1,16 +1,3 @@
-"""
-SQLite storage (data/splitslice.db, or SPLITSLICE_DB) for each user's
-stated preferences and order history.
-
-Tables: users; recorded_preferences and recorded_topping_preferences
-(what users stated); orders (mode, budget, coupon, total, delivery
-location, the raw price breakdown); order_items (each order's lines
-twice: requested and ordered); order_substitutions (changes they
-accepted); contacts (both directions); legacy_json_imports (old JSON
-files already imported). Views: order_requests (what each order asked
-for) and prediction_pizzas (its pizzas).
-"""
-
 import json
 import os
 import re
