@@ -1,5 +1,3 @@
-"""Data classes and constants shared across SplitSlice."""
-
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
