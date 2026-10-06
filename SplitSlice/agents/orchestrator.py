@@ -1,20 +1,3 @@
-"""
-Runs an order from start to finish:
-
-  1. Offer the user's usual order, or ask what they want and take
-     follow-ups until they're done (RetrievalAgent).
-  2. Ask for a budget (none means Premium) and a retrieval mode.
-  3. Build that mode's order from the user's learned preferences
-     (PreferenceAgent, RetrievalAgent) and confirm any changes.
-  4. Validate and price it (FulfillmentAgent), optionally split the
-     cost, and save it to the user's history.
-
-Network work runs in the background while the user reads and types: the
-store lookup and menu download from the start, and the coupon search
-(several seconds) each time the order is shown. If the preference
-database fails, the order still goes ahead, unsaved.
-"""
-
 import math
 import re
 from dataclasses import replace
